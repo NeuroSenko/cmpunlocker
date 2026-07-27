@@ -1,6 +1,6 @@
 --- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
-@@ -4942,6 +4942,260 @@
+@@ -4942,6 +4942,327 @@
                        devId);
          }
  
@@ -230,8 +230,75 @@
 +                GPU_REG_WR32(pGpu, PCIE_GEN2_PL_LINK_RATE_ADDR, PCIE_GEN2_PL_LINK_RATE_VALUE);
 +                GPU_REG_WR32(pGpu, 0x0008872cU, 0x00000006U);
 +                NV_PRINTF(LEVEL_ERROR,
-+                          "SEC2_DEBUG: PCIe XVE_OVR@8872c=0x%08x; skip mid-boot retrain\n",
++                          "SEC2_DEBUG: PCIe XVE_OVR@8872c=0x%08x\n",
 +                          GPU_REG_RD32(pGpu, 0x0008872cU));
++            }
++
++            //
++            // Mid-boot retrain. LINK_CAP is Gen2 only between here and the
++            // GSP_SET_SYSTEM_INFO / SET_REGISTRY RPCs sent from
++            // kgspBootstrap_TU102(); once GSP-RM initialises it clamps the
++            // capability back to Gen1. A retrain issued after that (patch
++            // 0008) can no longer reach Gen2, so it has to happen here.
++            //
++            // Only the root port's config space is touched while the link is
++            // down -- the GPU's own BAR0 is not accessed until training
++            // completes, so a dropped link cannot wedge this thread.
++            //
++            {
++                OBJCL *pClUp     = SYS_GET_CL(SYS_GET_INSTANCE());
++                void  *pHandleUp = NULL;
++                NvU8   busUp = 0, devUp = 0, funcUp = 0;
++                NvU16  vendorUp = 0, deviceUp = 0;
++                NvU32  capPtrUp = 0;
++
++                if (pClUp != NULL)
++                {
++                    pHandleUp = clFindP2PBrdg(pClUp, gpuGetDomain(pGpu),
++                                              gpuGetBus(pGpu), &busUp, &devUp,
++                                              &funcUp, &vendorUp, &deviceUp);
++                }
++
++                if ((pHandleUp != NULL) &&
++                    (clSetPortPcieCapOffset(pClUp, pHandleUp, &capPtrUp) == NV_OK))
++                {
++                    NvU32 ctrlOff = CL_PCIE_LINK_CTRL_STATUS - CL_PCIE_BEGIN + capPtrUp;
++                    NvU32 lc2Off  = ctrlOff + 0x20U;
++                    NvU16 lc2Up   = osPciReadWord(pHandleUp, lc2Off);
++                    NvU16 ctrlUp;
++                    NvU32 poll;
++                    NvU16 staUp = 0;
++
++                    // Target Link Speed = Gen2 on the root port.
++                    osPciWriteWord(pHandleUp, lc2Off,
++                                   (NvU16)((lc2Up & ~0xFU) | 0x2U));
++
++                    // Retrain Link.
++                    ctrlUp = osPciReadWord(pHandleUp, ctrlOff);
++                    osPciWriteWord(pHandleUp, ctrlOff, (NvU16)(ctrlUp | (1U << 5)));
++
++                    for (poll = 0; poll < 200; poll++)
++                    {
++                        staUp = osPciReadWord(pHandleUp, ctrlOff + 2U);
++                        if ((staUp & (1U << 11)) == 0U)
++                            break;
++                        osDelayUs(500);
++                    }
++
++                    NV_PRINTF(LEVEL_ERROR,
++                              "SEC2_DEBUG: PCIe mid-boot retrain up=%02x:%02x.%x "
++                              "cap=0x%x LC2 0x%04x->0x%04x sta=0x%04x speed=%u "
++                              "polls=%u\n",
++                              busUp, devUp, funcUp, capPtrUp, lc2Up,
++                              osPciReadWord(pHandleUp, lc2Off), staUp,
++                              staUp & 0xFU, poll);
++                }
++                else
++                {
++                    NV_PRINTF(LEVEL_ERROR,
++                              "SEC2_DEBUG: PCIe mid-boot retrain skipped "
++                              "(no upstream port handle)\n");
++                }
 +            }
 +
 +            NvU32 statAfter = GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CTRL_STATUS_ADDR);
@@ -263,7 +330,7 @@
          {
 --- a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
-@@ -611,6 +611,44 @@
+@@ -611,6 +611,67 @@
          }
      }
  
@@ -301,6 +368,29 @@
 +                NV_PRINTF(LEVEL_ERROR,
 +                          "SEC2_DEBUG: PCIe XVE_OVR late=0x%08x\n",
 +                          GPU_REG_RD32(pGpu, 0x0008872cU));
++            }
++
++            //
++            // GspSystemInfo was filled by _kgspPrepareSystemInfo() before the
++            // unlock ran, so its cached linkCap still advertises Gen1. It is
++            // sent to GSP-RM by kgspSendInitRpcs() a few lines below, and
++            // GSP-RM clamps the link back to match. Refresh it with the
++            // capability the GPU actually reports now.
++            //
++            if (pKernelGsp->pSystemInfo != NULL)
++            {
++                NvU32 capLate = GPU_REG_RD32(pGpu, 0x00088084U);
++                NvU32 staleCap = pKernelGsp->pSystemInfo->pcieConfigReg.linkCap;
++                pKernelGsp->pSystemInfo->pcieConfigReg.linkCap = capLate;
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: PCIe late CAP=0x%08x CAP2=0x%08x LC2=0x%08x "
++                          "STAT=0x%08x sysinfo.linkCap 0x%08x->0x%08x\n",
++                          capLate,
++                          GPU_REG_RD32(pGpu, 0x000880a4U),
++                          GPU_REG_RD32(pGpu, 0x000880a8U),
++                          GPU_REG_RD32(pGpu, 0x00088088U),
++                          staleCap,
++                          pKernelGsp->pSystemInfo->pcieConfigReg.linkCap);
 +            }
 +        }
 +    }

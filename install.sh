@@ -67,11 +67,11 @@ step() {
 detect_os() {
     OS_ID=""
     OS_ID_LIKE=""
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        OS_ID="${ID:-}"
-        OS_ID_LIKE="${ID_LIKE:-}"
-    fi
+    [[ -f /etc/os-release ]] || return 0
+    # Sourced in a subshell: /etc/os-release sets VERSION, NAME, ID and friends,
+    # which would otherwise overwrite our own variables of the same name.
+    OS_ID="$(. /etc/os-release; printf '%s' "${ID:-}")"
+    OS_ID_LIKE="$(. /etc/os-release; printf '%s' "${ID_LIKE:-}")"
 }
 detect_os
 
@@ -304,8 +304,10 @@ CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
 step "Step 5b/6: Configuring PCIe Gen2"
+# RMPcieLinkSpeed field ALLOW_GEN2 is 1:0, where _ENABLE is 0x1 and _DISABLE
+# is 0x2 (nvrm_registry.h). The key is forwarded to GSP-RM by SET_REGISTRY.
 cat > /etc/modprobe.d/cmp-pcie-gen2.conf <<'EOF'
-options nvidia NVreg_RegistryDwords="RmForceEnableGen2=1;RMPcieLinkSpeed=0x2"
+options nvidia NVreg_RegistryDwords="RmForceEnableGen2=1;RMPcieLinkSpeed=0x1"
 EOF
 ok "Wrote /etc/modprobe.d/cmp-pcie-gen2.conf"
 

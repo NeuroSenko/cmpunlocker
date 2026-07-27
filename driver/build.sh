@@ -29,11 +29,11 @@ die()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 detect_os() {
     OS_ID=""
     OS_ID_LIKE=""
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        OS_ID="${ID:-}"
-        OS_ID_LIKE="${ID_LIKE:-}"
-    fi
+    [[ -f /etc/os-release ]] || return 0
+    # Sourced in a subshell: /etc/os-release sets VERSION, NAME, ID and friends,
+    # which would otherwise overwrite our own variables of the same name.
+    OS_ID="$(. /etc/os-release; printf '%s' "${ID:-}")"
+    OS_ID_LIKE="$(. /etc/os-release; printf '%s' "${ID_LIKE:-}")"
 }
 detect_os
 
