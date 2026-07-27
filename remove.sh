@@ -18,6 +18,17 @@ warn() { echo -e "${YELLOW}!${NC} $*"; }
 err()  { echo -e "${RED}✗${NC} $*" >&2; }
 die()  { err "$*"; exit 1; }
 
+detect_os() {
+    OS_ID=""
+    OS_ID_LIKE=""
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        OS_ID="${ID:-}"
+        OS_ID_LIKE="${ID_LIKE:-}"
+    fi
+}
+detect_os
+
 step() {
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

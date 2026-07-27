@@ -26,6 +26,34 @@ ok()   { echo -e "${GREEN}[ OK ]${NC}  $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 die()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
+detect_os() {
+    OS_ID=""
+    OS_ID_LIKE=""
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        OS_ID="${ID:-}"
+        OS_ID_LIKE="${ID_LIKE:-}"
+    fi
+}
+detect_os
+
+kernel_headers_hint() {
+    case "${OS_ID} ${OS_ID_LIKE}" in
+        *arch*|*manjaro*|*endeavouros*)
+            echo "Install the 'linux-headers' package (pacman -S linux-headers, or linux-lts-headers/linux-zen-headers if you're on a non-default kernel)."
+            ;;
+        *fedora*|*rhel*|*centos*)
+            echo "Install kernel-devel (dnf install kernel-devel-${KVER})."
+            ;;
+        *ubuntu*|*debian*)
+            echo "Install linux-headers-${KVER}."
+            ;;
+        *)
+            echo "Install linux-headers-${KVER} or kernel-devel."
+            ;;
+    esac
+}
+
 version_supported() {
     local v="$1"
     local s
@@ -39,7 +67,7 @@ version_supported() {
 [[ -n "${VERSION}" ]] || die "No driver version set (driver/VERSION empty and CMPUNLOCKER_DRIVER_VERSION unset)"
 version_supported "${VERSION}" || die "Unsupported driver version '${VERSION}' (supported: ${SUPPORTED_VERSIONS[*]})"
 [[ -d "${PATCH_DIR}" ]] || die "Missing patches directory: ${PATCH_DIR}"
-[[ -d "${KSRC}" ]] || die "Kernel headers not found at ${KSRC}. Install linux-headers-${KVER} (or kernel-devel)."
+[[ -d "${KSRC}" ]] || die "Kernel headers not found at ${KSRC}. $(kernel_headers_hint)"
 command -v python3 &>/dev/null || die "python3 is required to apply the card memory profile"
 info "Building against open-gpu-kernel-modules ${VERSION}"
 

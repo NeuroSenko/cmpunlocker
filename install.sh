@@ -64,6 +64,34 @@ step() {
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
+detect_os() {
+    OS_ID=""
+    OS_ID_LIKE=""
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        OS_ID="${ID:-}"
+        OS_ID_LIKE="${ID_LIKE:-}"
+    fi
+}
+detect_os
+
+kernel_headers_hint() {
+    case "${OS_ID} ${OS_ID_LIKE}" in
+        *arch*|*manjaro*|*endeavouros*)
+            echo "Install the 'linux-headers' package (pacman -S linux-headers, or linux-lts-headers/linux-zen-headers if you're on a non-default kernel)."
+            ;;
+        *fedora*|*rhel*|*centos*)
+            echo "Install kernel-devel (dnf install kernel-devel-$(uname -r))."
+            ;;
+        *ubuntu*|*debian*)
+            echo "Install linux-headers-$(uname -r)."
+            ;;
+        *)
+            echo "Install linux-headers-$(uname -r) or kernel-devel."
+            ;;
+    esac
+}
+
 normalize_bus_id() {
     local raw="$1"
     raw="$(echo "${raw}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
@@ -264,7 +292,7 @@ fi
 version_supported "${detected}" || die "Installed driver is ${detected}, but cmpunlocker requires one of: ${SUPPORTED_VERSIONS_CSV}."
 ok "NVIDIA driver ${detected} is supported"
 
-[[ -d "/lib/modules/$(uname -r)/build" ]] || die "Kernel headers missing for $(uname -r). Install linux-headers-$(uname -r) or kernel-devel."
+[[ -d "/lib/modules/$(uname -r)/build" ]] || die "Kernel headers missing for $(uname -r). $(kernel_headers_hint)"
 ok "Kernel headers present for $(uname -r)"
 
 step "Step 5/6: Building and installing patched modules"
@@ -401,6 +429,7 @@ configure_iommu_kernel_cmdline() {
 if (( CONFIGURE_IOMMU == 0 )); then
     warn "--no-iommu given; leaving kernel command line untouched"
 else
+    info "Detected distro: ${OS_ID:-unknown}"
     IOMMU_PARAMS="$(iommu_params_for_cpu)"
     if [[ -z "${IOMMU_PARAMS}" ]]; then
         warn "Unrecognized CPU vendor — cannot pick IOMMU kernel parameters; skipping"
